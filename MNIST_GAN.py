@@ -167,7 +167,7 @@ def train(epochs=1, batch_size=128):
 	        file.close()
 
 
-        if e == 1 or e % 5 == 0:
+        if e == 1 or e % 20 == 0:
             plot_generated_images(e, generator)
 
 
