@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import os
 
 from keras.layers import Input
 from keras.models import Model, Sequential
@@ -16,16 +17,28 @@ np.random.seed(10)
 # The dimension of our random noise vector.
 random_dim = 100
 
+if not os.path.exists('./outputs'):
+	os.makedirs('./outputs')
+if not os.path.exists('./losses'):
+	os.makedirs('./losses')
 
-def load_minst_data():
+lossfiles = ['g_loss','d_loss_real','d_loss_fake','d_acc_real','d_acc_fake']
+for f in lossfiles:
+	file = open('./losses/'+f+'.txt','a')
+	file.truncate(0)
+	file.close()
+
+
+
+def load_mnist_data():
     # load the data
-    (x_train, y_train), (x_test, y_test) = mnist.load_data()
+    (x_train,_), (_, _) = mnist.load_data()
     # normalize our inputs to be in the range[-1, 1]
     x_train = (x_train.astype(np.float32) - 127.5)/127.5
     # convert x_train with a shape of (60000, 28, 28) to (60000, 784) so we have
     # 784 columns per row
     x_train = x_train.reshape(60000, 784)
-    return (x_train, y_train, x_test, y_test)
+    return x_train
 
 
 def get_optimizer():
@@ -63,7 +76,7 @@ def get_discriminator(optimizer):
     discriminator.add(Dropout(0.3))
 
     discriminator.add(Dense(1, activation='sigmoid'))
-    discriminator.compile(loss='binary_crossentropy', optimizer=optimizer)
+    discriminator.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accuracy'])
     return discriminator
 
 
@@ -93,12 +106,12 @@ def plot_generated_images(epoch, generator, examples=100, dim=(10, 10), figsize=
         plt.imshow(generated_images[i], interpolation='nearest', cmap='gray_r')
         plt.axis('off')
     plt.tight_layout()
-    plt.savefig('gan_generated_image_epoch_%d.png' % epoch)
+    plt.savefig('./outputs/gan_generated_image_epoch_%d.png' % epoch)
 
 
 def train(epochs=1, batch_size=128):
     # Get the training and testing data
-    x_train, y_train, x_test, y_test = load_minst_data()
+    x_train = load_mnist_data()
     # Split the training data into batches of size 128
     batch_count = x_train.shape[0] / batch_size
 
@@ -108,8 +121,12 @@ def train(epochs=1, batch_size=128):
     discriminator = get_discriminator(adam)
     gan = get_gan_network(discriminator, random_dim, generator, adam)
 
+
     for e in range(1, epochs+1):
         print('-'*15, 'Epoch %d' % e, '-'*15)
+
+        losses = [0]*5
+
         for _ in tqdm(range(int(batch_count))):
             # Get a random set of input noise and images
             noise = np.random.normal(0, 1, size=[batch_size, random_dim])
@@ -117,7 +134,6 @@ def train(epochs=1, batch_size=128):
 
             # Generate fake MNIST images
             generated_images = generator.predict(noise)
-            X = np.concatenate([image_batch, generated_images])
 
             # Labels for generated and real data
             y_dis = np.zeros(2*batch_size)
@@ -126,17 +142,48 @@ def train(epochs=1, batch_size=128):
 
             # Train discriminator
             discriminator.trainable = True
-            discriminator.train_on_batch(X, y_dis)
+            d_loss_real, d_acc_real = discriminator.train_on_batch(image_batch, y_dis[:batch_size])
+            d_loss_fake, d_acc_fake = discriminator.train_on_batch(generated_images, y_dis[batch_size:])
+
 
             # Train generator
             noise = np.random.normal(0, 1, size=[batch_size, random_dim])
             y_gen = np.ones(batch_size)
             discriminator.trainable = False
-            gan.train_on_batch(noise, y_gen)
+            g_loss = gan.train_on_batch(noise, y_gen)
 
-        if e == 1 or e % 20 == 0:
+            losses[0] += g_loss
+            losses[1] += d_loss_real
+            losses[2] += d_loss_fake
+            losses[3] += d_acc_real
+            losses[4] += d_acc_fake
+
+        for i in range(len(losses)):
+        	losses[i] /= batch_count
+        
+        for i,f in enumerate(lossfiles):
+	        file = open('./losses/'+f+'.txt','a')
+	        file.write(str(losses[i])+"\n")
+	        file.close()
+
+
+        if e == 1 or e % 5 == 0:
             plot_generated_images(e, generator)
 
 
 
-train(400, 128)
+train(450, 128)
+
+for i in ['d_loss_real','d_loss_fake','g_loss']:
+    f = open("./losses/"+i+'.txt')
+    loss = []
+    ret = f.readline()
+    while ret!='':
+    	loss.append(float(ret[:-1]))
+    	ret = f.readline()
+    plt.plot(loss,label=i)
+    
+plt.legend()
+plt.title("GAN loss plots")
+# plt.show()
+plt.savefig("./loss_plots.png")
